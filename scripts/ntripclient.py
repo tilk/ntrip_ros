@@ -3,8 +3,9 @@
 import rospy
 
 #from nmea_msgs.msg import Sentence
-from rtcm_msgs.msg import Message
+from mavros_msgs.msg import RTCM
 
+import datetime
 from httplib import HTTPConnection
 from base64 import b64encode
 from threading import Thread
@@ -23,30 +24,38 @@ class ntripconnect(Thread):
             'Authorization': 'Basic ' + b64encode(self.ntc.ntrip_user + ':' + self.ntc.ntrip_pass)
         }
         connection = HTTPConnection(self.ntc.ntrip_server)
-        connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga, headers)
+        now = datetime.datetime.utcnow()
+        connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga % (now.hour, now.minute, now.second), headers)
         
         response = connection.getresponse()
         if response.status != 200: raise Exception("blah")
         buf = ""
-        rmsg = Message()
+        rmsg = RTCM()
         while not self.stop:
-            data = response.read(100)
-            pos = data.find('\r\n')
-            if pos != -1:
-                rmsg.message = buf + data[:pos]
-                rmsg.header.seq += 1
-                rmsg.header.stamp = rospy.get_rostime()
-                buf = data[pos+2:]
-                self.ntc.pub.publish(rmsg)
-            else: buf += data
-        
+            data = response.read(1)
+            if data!=chr(211):
+                continue
+            l1 = ord(response.read(1))
+            l2 = ord(response.read(1))
+            pkt_len = ((l1&0x3)<<8)+l2
+    
+            pkt = response.read(pkt_len)
+            parity = response.read(3)
+            if len(pkt) != pkt_len:
+                rospy.logerr("Length error: {} {}".format(len(pkt), pkt_len))
+                continue
+            rmsg.header.seq += 1
+            rmsg.header.stamp = rospy.get_rostime()
+            rmsg.data = data + chr(l1) + chr(l2) + pkt + parity
+            self.ntc.pub.publish(rmsg)
+
         connection.close()
 
 class ntripclient:
     def __init__(self):
         rospy.init_node('ntripclient', anonymous=True)
 
-        self.rtcm_topic = rospy.get_param('~rtcm_topic', 'rtcm')
+        self.rtcm_topic = rospy.get_param('~rtcm_topic')
         self.nmea_topic = rospy.get_param('~nmea_topic', 'nmea')
 
         self.ntrip_server = rospy.get_param('~ntrip_server')
@@ -55,7 +64,7 @@ class ntripclient:
         self.ntrip_stream = rospy.get_param('~ntrip_stream')
         self.nmea_gga = rospy.get_param('~nmea_gga')
 
-        self.pub = rospy.Publisher(self.rtcm_topic, Message, queue_size=10)
+        self.pub = rospy.Publisher(self.rtcm_topic, RTCM, queue_size=10)
 
         self.connection = None
         self.connection = ntripconnect(self)

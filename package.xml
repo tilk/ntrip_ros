@@ -42,7 +42,7 @@
   <buildtool_depend>catkin</buildtool_depend>
   <run_depend>nmea_msgs</run_depend>
   <run_depend>rospy</run_depend>
-  <run_depend>rtcm_msgs</run_depend>
+  <run_depend>mavros_msgs</run_depend>
   <run_depend>std_msgs</run_depend>
 
 
